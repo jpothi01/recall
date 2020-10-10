@@ -29,7 +29,10 @@ struct Config {
 struct Options {
     /// Input file
     #[structopt(parse(from_str))]
-    note_title: Option<String>,
+    note_title_or_index: Option<String>,
+
+    #[structopt(short = "a", long = "archive")]
+    archive: bool,
 }
 
 fn find_config_file() -> Option<Box<PathBuf>> {
@@ -84,8 +87,9 @@ fn insert_note(connnection: sqlite::Connection, note: Note) -> sqlite::Result<()
 }
 
 fn list_notes(connection: sqlite::Connection) -> sqlite::Result<Vec<Note>> {
-    let mut statement = connection
-        .prepare("SELECT datetime, title, link, path FROM notes WHERE archived = FALSE")?;
+    let mut statement = connection.prepare(
+        "SELECT datetime, title, link, path FROM notes WHERE archived = FALSE ORDER BY datetime",
+    )?;
 
     let mut result = Vec::<Note>::new();
     while let State::Row = statement.next()? {
@@ -104,6 +108,36 @@ fn list_notes(connection: sqlite::Connection) -> sqlite::Result<Vec<Note>> {
     Ok(result)
 }
 
+fn archive_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Result<()> {
+    let mut statement = connection
+        .prepare("SELECT id, title FROM notes WHERE archived = FALSE ORDER BY datetime")?;
+
+    let mut current_index = 0;
+    while let State::Row = statement.next()? {
+        if current_index != note_index {
+            current_index += 1;
+            continue;
+        }
+
+        let id = statement.read::<i64>(0)?;
+        let title = statement.read::<String>(1)?;
+        let mut statement2 = connection.prepare(
+            " UPDATE notes
+            SET
+            archived = TRUE
+            WHERE id = ?
+            ",
+        )?;
+        statement2.bind(1, id)?;
+        statement2.next()?;
+        println!("Note titled '{}' archived", title);
+        return Ok(());
+    }
+
+    println!("Note not found. Nothing archived");
+    return Ok(());
+}
+
 fn run(config: Config, options: Options) -> sqlite::Result<()> {
     let connection = sqlite::open(Path::new(&*shellexpand::tilde(&config.db_path)))?;
 
@@ -120,7 +154,26 @@ fn run(config: Config, options: Options) -> sqlite::Result<()> {
         ",
     )?;
 
-    match options.note_title {
+    if options.archive {
+        return match options.note_title_or_index {
+            None => {
+                println!("Must supply note index with --archive");
+                Ok(())
+            }
+            Some(note_title_or_index) => {
+                let note_index = note_title_or_index.parse::<i64>();
+                match note_index {
+                    Ok(note_index) => archive_note(connection, note_index),
+                    Err(err) => {
+                        println!("Error parsing note index: {}", err);
+                        Ok(())
+                    }
+                }
+            }
+        };
+    }
+
+    match options.note_title_or_index {
         Some(note_title) => insert_note(connection, Note::new(note_title, None, None)),
         None => {
             for note in list_notes(connection)? {
