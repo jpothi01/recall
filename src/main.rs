@@ -1,4 +1,5 @@
 use chrono;
+use colored::*;
 use serde_derive::Deserialize;
 use shellexpand;
 use sqlite::State;
@@ -73,18 +74,18 @@ fn insert_note(connnection: sqlite::Connection, note: Note) -> sqlite::Result<()
     connnection.execute(format!(
         "
     INSERT INTO notes (datetime, title, link, path)
-    VALUES ({}, '{}', '{}', '{}')
+    VALUES ({}, '{}', {}, {})
     ",
         note.datetime_millis,
         note.title,
-        note.path.unwrap_or(String::from("NULL")),
-        note.link.unwrap_or(String::from("NULL"))
+        format!("'{}'", note.path.unwrap_or(String::from("NULL"))),
+        format!("'{}'", note.link.unwrap_or(String::from("NULL")))
     ))
 }
 
 fn list_notes(connection: sqlite::Connection) -> sqlite::Result<Vec<Note>> {
     let mut statement = connection
-        .prepare("SELECT (datetime, title, link, path) FROM notes WHERE archived = FALSE")?;
+        .prepare("SELECT datetime, title, link, path FROM notes WHERE archived = FALSE")?;
 
     let mut result = Vec::<Note>::new();
     while let State::Row = statement.next()? {
@@ -124,9 +125,14 @@ fn run(config: Config, options: Options) -> sqlite::Result<()> {
         None => {
             for note in list_notes(connection)? {
                 println!(
-                    "{}\t|{}",
-                    chrono::NaiveDateTime::from_timestamp(note.datetime_millis, 0),
-                    note.title
+                    "{}\t{}",
+                    chrono::DateTime::<chrono::Local>::from(
+                        std::time::UNIX_EPOCH
+                            + std::time::Duration::from_millis(
+                                u64::try_from(note.datetime_millis).unwrap()
+                            )
+                    ),
+                    note.title.yellow()
                 );
             }
             Ok(())
