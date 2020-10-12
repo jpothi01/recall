@@ -10,6 +10,7 @@ use std::fs::File;
 use std::path::Display;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time;
 use structopt::StructOpt;
 use toml::de;
@@ -219,8 +220,7 @@ fn note_display_string(note: &Note) -> String {
     }
 }
 
-fn display_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Result<()> {
-    // TODO: de-dupe
+fn read_nth_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Result<Note> {
     let mut statement = connection.prepare(
         "SELECT id, title, path, link, text FROM notes WHERE archived = FALSE ORDER BY datetime",
     )?;
@@ -232,12 +232,28 @@ fn display_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Resu
             continue;
         }
 
-        println!("{}", note_display_string(&read_note(&mut statement)?));
-        return Ok(());
+        return read_note(&mut statement);
     }
 
-    println!("Note not found.");
-    return Ok(());
+    // TODO: should be error
+    panic!("SHould be error");
+}
+
+fn open_note(note: &Note) {
+    match &note.content {
+        Some(note_content) => match note_content {
+            NoteContent::Link(link) => {
+                Command::new("open").arg(link).spawn().unwrap();
+            }
+            NoteContent::Path(path) => {
+                Command::new("open").arg(path).spawn().unwrap();
+            }
+            NoteContent::Text(text) => {
+                Command::new("cat").arg(text).spawn().unwrap();
+            }
+        },
+        None => (),
+    };
 }
 
 fn archive_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Result<()> {
@@ -310,7 +326,12 @@ fn run(config: Config, options: Options) -> sqlite::Result<()> {
         Some(note_title_or_index) => {
             let note_index = note_title_or_index.parse::<i64>();
             match note_index {
-                Ok(note_index) => display_note(connection, note_index),
+                Ok(note_index) => {
+                    let note = read_nth_note(connection, note_index)?;
+                    println!("{}", note_display_string(&note));
+                    open_note(&note);
+                    Ok(())
+                }
                 Err(err) => {
                     let note_title = note_title_or_index;
                     // TODO: validate mutually exclusive
