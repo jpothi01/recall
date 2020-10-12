@@ -1,1 +1,2 @@
 db_path = "~/Documents/recall.db"
+editor_command = ["/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl", "-n", "-w"]

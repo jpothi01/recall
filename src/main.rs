@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time;
 use structopt::StructOpt;
+use tempfile::tempdir;
 use toml::de;
 
 const CONFIG_FILENAME: &'static str = ".recall.toml";
@@ -20,6 +21,7 @@ const CONFIG_FILENAME: &'static str = ".recall.toml";
 #[derive(Deserialize)]
 struct Config {
     db_path: String,
+    editor_command: Option<Vec<String>>,
 }
 
 #[derive(Debug, StructOpt)]
@@ -34,6 +36,9 @@ struct Options {
 
     #[structopt(short = "a", long = "archive")]
     archive: bool,
+
+    #[structopt(short = "e", long = "edit")]
+    edit: bool,
 
     #[structopt(short = "p", long = "path")]
     path: Option<String>,
@@ -202,9 +207,9 @@ fn list_notes(connection: sqlite::Connection) -> sqlite::Result<Vec<Note>> {
 
 fn note_display_string(note: &Note) -> String {
     let content_display = match &note.content {
-        Some(NoteContent::Path(path)) => Some(path.bold()),
-        Some(NoteContent::Link(link)) => Some(link.cyan()),
-        Some(NoteContent::Text(text)) => Some(text.italic()),
+        Some(NoteContent::Path(path)) => Some("path".italic()),
+        Some(NoteContent::Link(link)) => Some("link".italic()),
+        Some(NoteContent::Text(text)) => Some("text".italic()),
         None => None,
     };
     let title_display = note.title.yellow();
@@ -214,9 +219,9 @@ fn note_display_string(note: &Note) -> String {
     )
     .format("%F %H:%M:%S");
     match content_display {
-        None => format!("{}\t{}", time_display, title_display),
+        None => format!("{}\t\t{}", time_display, title_display),
         Some(content_display) => {
-            format!("{}\t{}\t{}", time_display, title_display, content_display)
+            format!("{}\t{}\t{}", time_display, content_display, title_display)
         }
     }
 }
@@ -238,6 +243,32 @@ fn read_nth_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Res
 
     // TODO: should be error
     panic!("SHould be error");
+}
+
+fn edit_text_in_editor(config: &Config, text: String) -> Option<String> {
+    // TODO: error handling
+    let editor_command = config.editor_command.clone().unwrap();
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("recall-temp.txt");
+    fs::write(&file_path, text.as_str()).unwrap();
+    let result = Command::new(&editor_command[0])
+        .args(&[
+            &editor_command[1],
+            &editor_command[2],
+            file_path.to_str().unwrap(),
+        ])
+        .output();
+
+    match result {
+        Ok(_) => {
+            println!("{}", String::from_utf8(result.unwrap().stdout).unwrap());
+            Some(fs::read_to_string(file_path).unwrap())
+        }
+        Err(err) => {
+            println!("Error executing editor: {}", err);
+            None
+        }
+    }
 }
 
 fn open_note(note: &Note) {
@@ -329,9 +360,27 @@ fn run(config: Config, options: Options) -> sqlite::Result<()> {
             match note_index {
                 Ok(note_index) => {
                     let note = read_nth_note(connection, note_index)?;
-                    println!("{}", note_display_string(&note));
-                    open_note(&note);
-                    Ok(())
+                    if options.edit {
+                        match note.content {
+                            Some(note_content) => match note_content {
+                                NoteContent::Text(text) => {
+                                    match edit_text_in_editor(&config, text) {
+                                        Some(new_text) => {
+                                            // TODO: save new text
+                                            Ok(())
+                                        }
+                                        None => panic!("Editing failed"),
+                                    }
+                                }
+                                _ => panic!("Unsupported"),
+                            },
+                            None => panic!("Unsupported"),
+                        }
+                    } else {
+                        println!("{}", note_display_string(&note));
+                        open_note(&note);
+                        Ok(())
+                    }
                 }
                 Err(err) => {
                     let note_title = note_title_or_index;
