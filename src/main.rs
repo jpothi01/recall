@@ -211,7 +211,8 @@ fn note_display_string(note: &Note) -> String {
     let time_display = chrono::DateTime::<chrono::Local>::from(
         std::time::UNIX_EPOCH
             + std::time::Duration::from_millis(u64::try_from(note.datetime_millis).unwrap()),
-    );
+    )
+    .format("%F %H:%M:%S");
     match content_display {
         None => format!("{}\t{}", time_display, title_display),
         Some(content_display) => {
@@ -249,7 +250,7 @@ fn open_note(note: &Note) {
                 Command::new("open").arg(path).spawn().unwrap();
             }
             NoteContent::Text(text) => {
-                Command::new("cat").arg(text).spawn().unwrap();
+                Command::new("echo").arg(text).spawn().unwrap();
             }
         },
         None => (),
