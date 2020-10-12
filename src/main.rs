@@ -384,8 +384,20 @@ fn run(config: Config, options: Options) -> sqlite::Result<()> {
                 }
                 Err(err) => {
                     let note_title = note_title_or_index;
-                    // TODO: validate mutually exclusive
-                    if let Some(path) = options.path {
+
+                    if options.edit {
+                        if options.text.is_some()
+                            || options.link.is_some()
+                            || options.path.is_some()
+                        {
+                            println!("--edit with note title is for making a new text note with an editors.");
+                            Ok(())
+                        } else {
+                            // TODO: error handling
+                            let text = edit_text_in_editor(&config, String::from("")).unwrap();
+                            insert_note(connection, Note::new_with_text(note_title, text))
+                        }
+                    } else if let Some(path) = options.path {
                         insert_note(connection, Note::new_with_path(note_title, path))
                     } else if let Some(link) = options.link {
                         insert_note(connection, Note::new_with_link(note_title, link))
