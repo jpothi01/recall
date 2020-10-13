@@ -1,13 +1,13 @@
 Notes and task tracking for people bad at notes and task tracking.
 
-## Remember tasks
+# Remember tasks
 ```
 recall "Take the dog for a walk"
 recall
 > 0 2020-10-12 20:19:20		    Take the dog for a walk
 ```
 
-## Remember stuff on the internet
+# Remember stuff on the internet
 ```
 recall "Cool thing on stack overflow, should check it out later" --link https://stackoverflow.com/questions/39785597/how-do-i-get-a-slice-of-a-vect-in-rust
 recall
