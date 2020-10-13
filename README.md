@@ -1,29 +1,35 @@
-Notes and reminders for people bad at notes and reminders.
+Notes and task tracking for people bad at notes and task tracking.
 
 ```
+# Remember tasks
 recall "Take the dog for a walk"
 recall
-> 1 | 10-02-2020 | "Take the dog for a walk"
+> 0 2020-10-12 20:19:20		    Take the dog for a walk
 
-recall "Finish this PR" --link "https://bitbucket.com/"
+# Remember internet stuff
+recall "Cool thing on stack overflow, should check it out later" --link https://stackoverflow.com/questions/39785597/how-do-i-get-a-slice-of-a-vect-in-rust
 recall
-> 1 | 10-02-2020 | "Finish this PR" | https://bitbucket.com/
+> 0 2020-10-12 20:19:20		    Take the dog for a walk
+> 1 2020-10-12 20:16:14	link	Cool thing on stack overflow, should check it out later
 
 recall 1
-<Opens the link in default browser>
+> https://stackoverflow.com/questions/39785597/how-do-i-get-a-slice-of-a-vect-in-rust
+> *opens the link*
 
-recall --forget 1
-recall --forget all
+# Remember stuff on your filesystem
+recall "Checkout these logs" --path ~/Downloads/Logs\ 4
+recall
+> 0 2020-10-12 20:19:20		    Take the dog for a walk
+> 1 2020-10-12 20:16:14	link	Cool thing on stack overflow, should check it out later
+> 2 2020-10-12 20:16:14	path	Checkout these logs
 
-recall "Checkout these logs" --path ~/Users/jpothier/Downloads/Logs\ 4
-> 1 | 10-02-2020 | "Check out these logs" | ~/Users/jpothier/Downloads/Logs\ 4
+recall 2
+> /Users/jpothier/Downloads/Logs\ 4
+> *opens finder to the path*
 
-recall 1
-"Checkout these logs"
-<Opens the path in default program>
-
-recall "Talk to Nico about the thing"
-recall --archive
-
-
-
+# Forget things
+recall --archive 0
+recall
+> 0 2020-10-12 20:16:14	link	Cool thing on stack overflow, should check it out later
+> 1 2020-10-12 20:16:14	path	Checkout these logs
+```

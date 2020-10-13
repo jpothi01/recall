@@ -231,6 +231,17 @@ fn note_display_string(note: &Note) -> String {
     }
 }
 
+fn note_content_display_string(note: &Note) -> String {
+    match &note.content {
+        Some(content) => match content {
+            NoteContent::Link(link) => link.clone(),
+            NoteContent::Path(path) => path.clone(),
+            _ => String::from(""),
+        },
+        None => String::from(""),
+    }
+}
+
 fn read_nth_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Result<Note> {
     let mut statement = connection.prepare(
         "SELECT id, title, path, link, text FROM notes WHERE archived = FALSE ORDER BY datetime",
@@ -479,6 +490,7 @@ fn run(config: Config, options: Options) -> Result<(), RecallError> {
                         }
                     } else {
                         println!("{}", note_display_string(&note));
+                        println!("{}", note_content_display_string(&note));
                         open_note(&note);
                         Ok(())
                     }
