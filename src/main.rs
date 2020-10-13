@@ -5,6 +5,7 @@ use shellexpand;
 use sqlite::State;
 use std::convert::TryFrom;
 use std::env;
+use std::fmt;
 use std::fs;
 use std::fs::File;
 use std::path::Display;
@@ -17,6 +18,7 @@ use tempfile::tempdir;
 use toml::de;
 
 const CONFIG_FILENAME: &'static str = ".recall.toml";
+const DEFAULT_EDITOR: &'static str = "vi";
 
 #[derive(Deserialize)]
 struct Config {
@@ -138,23 +140,26 @@ fn insert_note(connnection: sqlite::Connection, note: Note) -> sqlite::Result<()
     let (path, link, text) = match note.content {
         None => (None, None, None),
         Some(content) => match content {
-            NoteContent::Path(path) => (Some(format!("'{}'", path)), None, None),
-            NoteContent::Link(link) => (None, Some(format!("'{}'", link)), None),
-            NoteContent::Text(text) => (None, None, Some(format!("'{}'", text))),
+            NoteContent::Path(path) => (Some(path), None, None),
+            NoteContent::Link(link) => (None, Some(link), None),
+            NoteContent::Text(text) => (None, None, Some(text)),
         },
     };
 
-    connnection.execute(format!(
+    let mut statement = connnection.prepare(
         "
     INSERT INTO notes (datetime, title, path, link, text)
-    VALUES ({}, '{}', {}, {}, {})
+    VALUES (?, ?, ?, ?, ?)
     ",
-        note.datetime_millis,
-        note.title,
-        path.unwrap_or(String::from("NULL")),
-        link.unwrap_or(String::from("NULL")),
-        text.unwrap_or(String::from("NULL"))
-    ))
+    )?;
+
+    statement.bind(1, note.datetime_millis);
+    statement.bind(2, note.title.as_str());
+    statement.bind(3, path.as_ref().map(|a| a.as_str()));
+    statement.bind(4, link.as_ref().map(|a| a.as_str()));
+    statement.bind(5, text.as_ref().map(|a| a.as_str()));
+    statement.next()?;
+    Ok(())
 }
 
 fn read_note(statement: &mut sqlite::Statement) -> sqlite::Result<Note> {
@@ -245,29 +250,103 @@ fn read_nth_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Res
     panic!("SHould be error");
 }
 
-fn edit_text_in_editor(config: &Config, text: String) -> Option<String> {
-    // TODO: error handling
-    let editor_command = config.editor_command.clone().unwrap();
-    let dir = tempdir().unwrap();
+#[derive(Debug)]
+struct EditorError {
+    message: String,
+}
+
+impl fmt::Display for EditorError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Error using editor: {}", self.message)
+    }
+}
+
+#[derive(Debug)]
+struct RecallError {
+    message: String,
+}
+
+impl fmt::Display for RecallError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Error using editor: {}", self.message)
+    }
+}
+
+impl From<sqlite::Error> for RecallError {
+    fn from(e: sqlite::Error) -> Self {
+        RecallError {
+            message: format!(
+                "sqlite error code {}: {}",
+                e.code.unwrap_or(-1),
+                e.message.unwrap_or("unknown".to_owned())
+            ),
+        }
+    }
+}
+
+impl From<EditorError> for RecallError {
+    fn from(e: EditorError) -> Self {
+        RecallError {
+            message: format!("Error using editor: {}", e.message),
+        }
+    }
+}
+
+fn edit_text_in_editor(config: &Config, text: String) -> Result<String, EditorError> {
+    let (editor_program, editor_args) = if let Some(config_editor_command) = &config.editor_command
+    {
+        if config_editor_command.len() == 0 {
+            return Err(EditorError {
+                message: String::from(
+                    "The first entry in editor_command must be the path to a text editor program",
+                ),
+            });
+        }
+
+        (
+            config_editor_command[0].clone(),
+            config_editor_command[1..].to_vec(),
+        )
+    } else {
+        (String::from(DEFAULT_EDITOR), vec![])
+    };
+
+    let maybe_dir = tempdir();
+    if maybe_dir.is_err() {
+        return Err(EditorError {
+            message: format!("Error creating temp dir: {}", maybe_dir.unwrap_err()),
+        });
+    }
+
+    let dir = maybe_dir.unwrap();
     let file_path = dir.path().join("recall-temp.txt");
-    fs::write(&file_path, text.as_str()).unwrap();
-    let result = Command::new(&editor_command[0])
-        .args(&[
-            &editor_command[1],
-            &editor_command[2],
-            file_path.to_str().unwrap(),
-        ])
-        .output();
+    let write_result = fs::write(&file_path, text.as_str());
+    if write_result.is_err() {
+        return Err(EditorError {
+            message: format!("Error writing to temp file: {}", write_result.unwrap_err()),
+        });
+    }
+
+    let mut args = Vec::<String>::new();
+    args.extend(editor_args);
+    args.push(String::from(file_path.to_str().unwrap()));
+
+    let result = Command::new(editor_program).args(args.as_slice()).output();
 
     match result {
         Ok(_) => {
-            println!("{}", String::from_utf8(result.unwrap().stdout).unwrap());
-            Some(fs::read_to_string(file_path).unwrap())
+            let result = fs::read_to_string(&file_path);
+            if result.is_err() {
+                Err(EditorError {
+                    message: format!("Error read from temp file: {}", result.unwrap_err()),
+                })
+            } else {
+                Ok(result.unwrap())
+            }
         }
-        Err(err) => {
-            println!("Error executing editor: {}", err);
-            None
-        }
+        Err(err) => Err(EditorError {
+            message: format!("Error executing editor: {}", err),
+        }),
     }
 }
 
@@ -318,7 +397,7 @@ fn archive_note(connection: sqlite::Connection, note_index: i64) -> sqlite::Resu
     return Ok(());
 }
 
-fn run(config: Config, options: Options) -> sqlite::Result<()> {
+fn run(config: Config, options: Options) -> Result<(), RecallError> {
     let connection = sqlite::open(Path::new(&*shellexpand::tilde(&config.db_path)))?;
 
     connection.execute(
@@ -344,7 +423,7 @@ fn run(config: Config, options: Options) -> sqlite::Result<()> {
             Some(note_title_or_index) => {
                 let note_index = note_title_or_index.parse::<i64>();
                 match note_index {
-                    Ok(note_index) => archive_note(connection, note_index),
+                    Ok(note_index) => Ok(archive_note(connection, note_index)?),
                     Err(err) => {
                         println!("Error parsing note index: {}", err);
                         Ok(())
@@ -365,16 +444,20 @@ fn run(config: Config, options: Options) -> sqlite::Result<()> {
                             Some(note_content) => match note_content {
                                 NoteContent::Text(text) => {
                                     match edit_text_in_editor(&config, text) {
-                                        Some(new_text) => {
+                                        Ok(new_text) => {
                                             // TODO: save new text
                                             Ok(())
                                         }
-                                        None => panic!("Editing failed"),
+                                        Err(err) => Err(RecallError::from(err)),
                                     }
                                 }
-                                _ => panic!("Unsupported"),
+                                _ => Err(RecallError {
+                                    message: format!("Unsupported"),
+                                }),
                             },
-                            None => panic!("Unsupported"),
+                            None => Err(RecallError {
+                                message: format!("Unsupported"),
+                            }),
                         }
                     } else {
                         println!("{}", note_display_string(&note));
@@ -395,16 +478,28 @@ fn run(config: Config, options: Options) -> sqlite::Result<()> {
                         } else {
                             // TODO: error handling
                             let text = edit_text_in_editor(&config, String::from("")).unwrap();
-                            insert_note(connection, Note::new_with_text(note_title, text))
+                            Ok(insert_note(
+                                connection,
+                                Note::new_with_text(note_title, text),
+                            )?)
                         }
                     } else if let Some(path) = options.path {
-                        insert_note(connection, Note::new_with_path(note_title, path))
+                        Ok(insert_note(
+                            connection,
+                            Note::new_with_path(note_title, path),
+                        )?)
                     } else if let Some(link) = options.link {
-                        insert_note(connection, Note::new_with_link(note_title, link))
+                        Ok(insert_note(
+                            connection,
+                            Note::new_with_link(note_title, link),
+                        )?)
                     } else if let Some(text) = options.text {
-                        insert_note(connection, Note::new_with_text(note_title, text))
+                        Ok(insert_note(
+                            connection,
+                            Note::new_with_text(note_title, text),
+                        )?)
                     } else {
-                        insert_note(connection, Note::new(note_title))
+                        Ok(insert_note(connection, Note::new(note_title))?)
                     }
                 }
             }
@@ -430,7 +525,7 @@ fn main() {
                     match maybe_config {
                         Ok(config) => match run(config, options) {
                             Ok(()) => (),
-                            Err(err) => println!("Error: {}", err)
+                            Err(err) => println!("{}", err)
                         },
                         Err(err) => println!("Could not parse config located at {}: {}", config_file.display(), err)
                     }
