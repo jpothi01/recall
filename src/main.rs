@@ -55,12 +55,21 @@ struct Options {
 fn find_config_file() -> Option<Box<PathBuf>> {
     let original_cwd = std::env::current_dir().unwrap();
 
-    // TODO: recursve up directories
-    let path = Path::new(CONFIG_FILENAME);
-    if path.exists() {
-        let result = Box::new(path.to_path_buf());
-        std::env::set_current_dir(original_cwd).unwrap();
-        return Some(result);
+    loop {
+        let path = Path::new(CONFIG_FILENAME);
+        if path.exists() {
+            let result = Box::new(fs::canonicalize(path.to_path_buf()).unwrap());
+            std::env::set_current_dir(original_cwd).unwrap();
+            return Some(result);
+        }
+
+        let current_dir = std::env::current_dir().unwrap();
+        let maybe_parent = current_dir.parent();
+        if let None = maybe_parent {
+            break;
+        }
+
+        std::env::set_current_dir(maybe_parent.unwrap()).unwrap();
     }
 
     return None;
