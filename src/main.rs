@@ -153,11 +153,11 @@ fn insert_note(connnection: sqlite::Connection, note: Note) -> sqlite::Result<()
     ",
     )?;
 
-    statement.bind(1, note.datetime_millis);
-    statement.bind(2, note.title.as_str());
-    statement.bind(3, path.as_ref().map(|a| a.as_str()));
-    statement.bind(4, link.as_ref().map(|a| a.as_str()));
-    statement.bind(5, text.as_ref().map(|a| a.as_str()));
+    statement.bind(1, note.datetime_millis)?;
+    statement.bind(2, note.title.as_str())?;
+    statement.bind(3, path.as_ref().map(|a| a.as_str()))?;
+    statement.bind(4, link.as_ref().map(|a| a.as_str()))?;
+    statement.bind(5, text.as_ref().map(|a| a.as_str()))?;
     statement.next()?;
     Ok(())
 }
@@ -331,17 +331,35 @@ fn edit_text_in_editor(config: &Config, text: String) -> Result<String, EditorEr
     args.extend(editor_args);
     args.push(String::from(file_path.to_str().unwrap()));
 
-    let result = Command::new(editor_program).args(args.as_slice()).output();
+    let spawn_result = Command::new(editor_program).args(args.as_slice()).spawn();
 
-    match result {
-        Ok(_) => {
-            let result = fs::read_to_string(&file_path);
-            if result.is_err() {
-                Err(EditorError {
-                    message: format!("Error read from temp file: {}", result.unwrap_err()),
-                })
-            } else {
-                Ok(result.unwrap())
+    match spawn_result {
+        Ok(mut child) => {
+            let exit_status = child.wait();
+            match exit_status {
+                Ok(status) => {
+                    let code = status.code().unwrap_or(-1);
+                    if (code != 0) {
+                        Err(EditorError {
+                            message: format!("Editor exited with code {}", code),
+                        })
+                    } else {
+                        let result = fs::read_to_string(&file_path);
+                        if result.is_err() {
+                            Err(EditorError {
+                                message: format!(
+                                    "Error read from temp file: {}",
+                                    result.unwrap_err()
+                                ),
+                            })
+                        } else {
+                            Ok(result.unwrap())
+                        }
+                    }
+                }
+                Err(err) => Err(EditorError {
+                    message: format!("Editor exited with error: {}", err),
+                }),
             }
         }
         Err(err) => Err(EditorError {
